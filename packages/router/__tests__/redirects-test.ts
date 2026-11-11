@@ -3,6 +3,8 @@ import {
   createBrowserHistory,
   createMemoryHistory,
   createRouter,
+  redirect,
+  redirectDocument,
 } from "../index";
 import { replace } from "../utils";
 import type { TestRouteObject } from "./utils/data-router-setup";
@@ -709,6 +711,149 @@ describe("redirects", () => {
         pathname: "/",
         state: null,
       },
+    });
+  });
+
+  describe("invalid redirect locations", () => {
+    let INVALID_REDIRECTS = [
+      // eslint-disable-next-line no-script-url
+      "javascript:alert(1)",
+      // eslint-disable-next-line no-script-url
+      "JavaScript:alert(document.cookie)",
+      "data:text/html,<script>alert(1)</script>",
+      "blob:http://localhost/2e5f1b5e-6b4c-4e7e-8f43-0a5e1c3d9b11",
+      "file:///etc/passwd",
+      "about:blank",
+      "chrome://settings",
+      "filesystem:http://localhost/temporary/evil.html",
+    ];
+
+    // The URL parser removes ASCII tab characters anywhere in the input, so
+    // these don't look like absolute URLs to ABSOLUTE_URL_REGEX but a browser
+    // would still treat them as `javascript:` URLs if handed over as-is
+    let OBFUSCATED_REDIRECTS = [
+      "java\tscript:alert(1)",
+      "j\ta\tv\ta\ts\tc\tr\ti\tp\tt:alert(1)",
+    ];
+
+    function setupRedirectRouter(getResponse: () => Response) {
+      // Inject a jest-friendly window so we can assert the redirect location
+      // never reaches window.location.assign/replace
+      let testWindow = {
+        ...window,
+        location: {
+          ...window.location,
+          assign: jest.fn(),
+          replace: jest.fn(),
+        },
+      } as unknown as Window;
+      let history = createMemoryHistory();
+      jest.spyOn(history, "push");
+      jest.spyOn(history, "replace");
+      let router = createRouter({
+        history,
+        window: testWindow,
+        routes: [
+          { path: "/" },
+          { path: "/target" },
+          {
+            path: "/redirect",
+            loader: () => getResponse(),
+            action: () => getResponse(),
+          },
+        ],
+      }).initialize();
+      return { router, history, window: testWindow };
+    }
+
+    // Where the redirect originates: a navigation loader, a navigation action
+    // (with and without an explicit `replace`), or a loader returning a
+    // `redirectDocument()` which goes straight to window.location
+    let REDIRECT_SOURCES = ["loader", "action", "action (replace)", "document"];
+
+    function startInvalidRedirect(source: string, url: string) {
+      let t = setupRedirectRouter(() =>
+        source === "document" ? redirectDocument(url) : redirect(url)
+      );
+      let promise =
+        source === "loader" || source === "document"
+          ? t.router.navigate("/redirect")
+          : t.router.navigate("/redirect", {
+              formMethod: "post",
+              formData: createFormData({}),
+              replace: source === "action (replace)" ? true : undefined,
+            });
+      return { t, promise };
+    }
+
+    function getCases(urls: string[]) {
+      let cases: [string, string][] = [];
+      REDIRECT_SOURCES.forEach((source) =>
+        urls.forEach((url) => cases.push([source, url]))
+      );
+      return cases;
+    }
+
+    it.each(getCases(INVALID_REDIRECTS))(
+      "rejects %s redirects to invalid protocol %j",
+      async (source, url) => {
+        let { t, promise } = startInvalidRedirect(source, url);
+        await expect(promise).rejects.toThrow("Invalid redirect location");
+        expect(t.window.location.assign).not.toHaveBeenCalled();
+        expect(t.window.location.replace).not.toHaveBeenCalled();
+        expect(t.history.push).not.toHaveBeenCalled();
+        expect(t.history.replace).not.toHaveBeenCalled();
+        expect(t.router.state.location.pathname).toBe("/");
+        t.router.dispose();
+      }
+    );
+
+    // Non-absolute locations are resolved as relative paths against the
+    // redirecting route before they're processed, so an obfuscated scheme can
+    // never reach window.location or history as a scheme
+    it.each(getCases(OBFUSCATED_REDIRECTS))(
+      "resolves %s redirects to obfuscated protocol %j as a relative path",
+      async (source, url) => {
+        let { t, promise } = startInvalidRedirect(source, url);
+        await promise;
+        let hrefs = [
+          ...(t.window.location.assign as jest.Mock).mock.calls,
+          ...(t.window.location.replace as jest.Mock).mock.calls,
+          ...(t.history.push as jest.Mock).mock.calls,
+          ...(t.history.replace as jest.Mock).mock.calls,
+        ].map((args) => t.history.createHref(args[0]));
+        expect(hrefs).toEqual([`/redirect/${url}`]);
+        expect(new URL(hrefs[0], "http://localhost").protocol).toBe("http:");
+        t.router.dispose();
+      }
+    );
+
+    it("does not reject relative redirects that only contain a protocol-like string", async () => {
+      let url = "/target?next=javascript:alert(1)";
+      let t = setupRedirectRouter(() => redirect(url));
+      await t.router.navigate("/redirect");
+      expect(t.window.location.assign).not.toHaveBeenCalled();
+      expect(t.window.location.replace).not.toHaveBeenCalled();
+      expect(t.router.state).toMatchObject({
+        historyAction: "PUSH",
+        location: {
+          pathname: "/target",
+          search: "?next=javascript:alert(1)",
+        },
+        navigation: IDLE_NAVIGATION,
+        errors: null,
+      });
+      t.router.dispose();
+    });
+
+    it("still processes external redirects to valid protocols", async () => {
+      for (let url of ["https://remix.run/blog", "app://whatever"]) {
+        let t = setupRedirectRouter(() => redirect(url));
+        await t.router.navigate("/redirect");
+        expect(t.window.location.assign).toHaveBeenCalledWith(url);
+        expect(t.window.location.replace).not.toHaveBeenCalled();
+        t.router.dispose();
+      }
     });
   });
 
