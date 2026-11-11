@@ -456,6 +456,70 @@ describe("redirects", () => {
     });
   });
 
+  it("normalizes mixed leading separators in redirects", async () => {
+    let locations = [
+      "\\\\localhost/parent",
+      "/\\localhost/parent",
+      "\\/localhost/parent",
+    ];
+
+    for (let location of locations) {
+      let t = setup({ routes: REDIRECT_ROUTES });
+
+      let A = await t.navigate("/parent/child", {
+        formMethod: "post",
+        formData: createFormData({}),
+      });
+
+      let B = await A.actions.child.redirectReturn(
+        location,
+        undefined,
+        undefined,
+        ["parent"]
+      );
+      await B.loaders.parent.resolve("PARENT");
+      expect(t.router.state.location).toMatchObject({
+        hash: "",
+        pathname: "/parent",
+        search: "",
+        state: {
+          _isRedirect: true,
+        },
+      });
+      expect(t.window.location.assign).not.toHaveBeenCalled();
+    }
+  });
+
+  it("processes external redirects with mixed leading separators as document redirects", async () => {
+    let urls = [
+      "\\\\remix.run/blog",
+      "/\\remix.run/blog",
+      "\\/remix.run/blog",
+    ];
+
+    for (let replace of [false, true]) {
+      for (let url of urls) {
+        let t = setup({ routes: REDIRECT_ROUTES });
+
+        let A = await t.navigate("/parent/child", {
+          formMethod: "post",
+          formData: createFormData({}),
+          replace,
+        });
+
+        await A.actions.child.redirectReturn(url);
+        let [called, notCalled] = replace
+          ? [t.window.location.replace, t.window.location.assign]
+          : [t.window.location.assign, t.window.location.replace];
+        expect(called).toHaveBeenCalledWith(url);
+        expect(notCalled).not.toHaveBeenCalled();
+        // Never treated as an in-app navigation to the external origin
+        expect(t.history.push).not.toHaveBeenCalled();
+        expect(t.history.replace).not.toHaveBeenCalled();
+      }
+    }
+  });
+
   it("properly handles same-origin absolute URLs when using a basename", async () => {
     let t = setup({ routes: REDIRECT_ROUTES, basename: "/base" });
 

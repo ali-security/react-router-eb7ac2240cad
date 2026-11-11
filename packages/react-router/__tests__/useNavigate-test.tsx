@@ -754,6 +754,37 @@ describe("useNavigate", () => {
           </h1>
         `);
       });
+
+      it("normalizes mixed leading separators", () => {
+        let spy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+        for (let to of ["\\\\foo", "/\\foo", "\\/foo"]) {
+          let renderer: TestRenderer.ReactTestRenderer;
+          TestRenderer.act(() => {
+            renderer = TestRenderer.create(
+              <MemoryRouter initialEntries={["/home"]}>
+                <Routes>
+                  <Route path="home" element={<UseNavigateButton to={to} />} />
+                  <Route path="foo" element={<p>foo</p>} />
+                </Routes>
+              </MemoryRouter>
+            );
+          });
+
+          // @ts-expect-error
+          let button = renderer.root.findByType("button");
+          TestRenderer.act(() => button.props.onClick());
+
+          // @ts-expect-error
+          expect(renderer.toJSON()).toMatchInlineSnapshot(`
+            <p>
+              foo
+            </p>
+          `);
+        }
+
+        spy.mockRestore();
+      });
     });
 
     describe("with a relative href (relative=route)", () => {
@@ -783,6 +814,37 @@ describe("useNavigate", () => {
             About
           </h1>
         `);
+      });
+
+      it("normalizes a leading backslash when resolving against the root", () => {
+        for (let [initialEntry, to] of [
+          ["/home", "../\\foo"],
+          ["/", "\\foo"],
+        ]) {
+          let renderer: TestRenderer.ReactTestRenderer;
+          TestRenderer.act(() => {
+            renderer = TestRenderer.create(
+              <MemoryRouter initialEntries={[initialEntry]}>
+                <Routes>
+                  <Route path="home" element={<UseNavigateButton to={to} />} />
+                  <Route index element={<UseNavigateButton to={to} />} />
+                  <Route path="foo" element={<p>foo</p>} />
+                </Routes>
+              </MemoryRouter>
+            );
+          });
+
+          // @ts-expect-error
+          let button = renderer.root.findByType("button");
+          TestRenderer.act(() => button.props.onClick());
+
+          // @ts-expect-error
+          expect(renderer.toJSON()).toMatchInlineSnapshot(`
+            <p>
+              foo
+            </p>
+          `);
+        }
       });
 
       it("handles upward navigation from an index routes", () => {
@@ -1394,6 +1456,41 @@ describe("useNavigate", () => {
             About
           </h1>
         `);
+      });
+
+      it("normalizes mixed leading separators", () => {
+        let spy = jest.spyOn(console, "warn").mockImplementation(() => {});
+
+        for (let to of ["\\\\foo", "/\\foo", "\\/foo", "../\\foo"]) {
+          let router = createMemoryRouter(
+            createRoutesFromElements(
+              <>
+                <Route path="home" element={<UseNavigateButton to={to} />} />
+                <Route path="foo" element={<p>foo</p>} />
+              </>
+            ),
+            { initialEntries: ["/home"] }
+          );
+
+          let renderer: TestRenderer.ReactTestRenderer;
+          TestRenderer.act(() => {
+            renderer = TestRenderer.create(<RouterProvider router={router} />);
+          });
+
+          // @ts-expect-error
+          let button = renderer.root.findByType("button");
+          TestRenderer.act(() => button.props.onClick());
+
+          expect(router.state.location.pathname).toBe("/foo");
+          // @ts-expect-error
+          expect(renderer.toJSON()).toMatchInlineSnapshot(`
+            <p>
+              foo
+            </p>
+          `);
+        }
+
+        spy.mockRestore();
       });
     });
 
