@@ -495,6 +495,133 @@ describe("redirects", () => {
     expect(t.window.location.replace).not.toHaveBeenCalled();
   });
 
+  describe("same-origin absolute URLs with double slashes", () => {
+    // The pathname of a same-origin absolute URL such as
+    // `http://localhost//evil.com/path` is `//evil.com/path`, which would be a
+    // protocol-relative (cross-origin) URL if it were used as-is once the
+    // origin has been stripped off
+    let DOUBLE_SLASH_ROUTES: TestRouteObject[] = [
+      {
+        id: "root",
+        path: "/",
+        children: [
+          {
+            id: "parent",
+            path: "parent",
+            action: true,
+            loader: true,
+          },
+          {
+            id: "evil",
+            path: "evil.com/path",
+          },
+        ],
+      },
+    ];
+
+    let DOUBLE_SLASH_REDIRECTS: [string, string][] = [
+      ["http://localhost//evil.com/path", "/evil.com/path"],
+      ["http://localhost///evil.com/path", "/evil.com/path"],
+      ["http://localhost/\\evil.com/path", "/evil.com/path"],
+      ["//localhost//evil.com/path", "/evil.com/path"],
+      ["http://localhost//evil.com/path?a=1#hash", "/evil.com/path?a=1#hash"],
+    ];
+
+    // Where the redirect originates: a navigation loader, a navigation action
+    // (with and without an explicit `replace`), or a fetcher loader/action
+    let DOUBLE_SLASH_SOURCES = [
+      "loader",
+      "action",
+      "action (replace)",
+      "fetcher loader",
+      "fetcher action",
+    ];
+
+    async function startDoubleSlashRedirect(source: string, url: string) {
+      let t = setup({ routes: DOUBLE_SLASH_ROUTES });
+      if (source === "loader") {
+        let A = await t.navigate("/parent");
+        await A.loaders.parent.redirectReturn(url);
+      } else if (source === "action" || source === "action (replace)") {
+        let A = await t.navigate("/parent", {
+          formMethod: "post",
+          formData: createFormData({}),
+          replace: source === "action (replace)" ? true : undefined,
+        });
+        await A.actions.parent.redirectReturn(url);
+      } else if (source === "fetcher loader") {
+        let A = await t.fetch("/parent");
+        await A.loaders.parent.redirectReturn(url);
+      } else {
+        let A = await t.fetch("/parent", {
+          formMethod: "post",
+          formData: createFormData({}),
+        });
+        await A.actions.parent.redirectReturn(url);
+      }
+      return t;
+    }
+
+    let cases: [string, string, string][] = [];
+    DOUBLE_SLASH_SOURCES.forEach((source) =>
+      DOUBLE_SLASH_REDIRECTS.forEach(([url, expected]) =>
+        cases.push([source, url, expected])
+      )
+    );
+
+    it.each(cases)(
+      "normalizes %s redirects to %j as an in-app navigation to %j",
+      async (source, url, expected) => {
+        let t = await startDoubleSlashRedirect(source, url);
+        let hrefs = [
+          ...(t.window.location.assign as jest.Mock).mock.calls,
+          ...(t.window.location.replace as jest.Mock).mock.calls,
+          ...(t.history.push as jest.Mock).mock.calls,
+          ...(t.history.replace as jest.Mock).mock.calls,
+        ].map((args) => t.history.createHref(args[0]));
+        expect(hrefs).toEqual([expected]);
+        expect(t.window.location.assign).not.toHaveBeenCalled();
+        expect(t.window.location.replace).not.toHaveBeenCalled();
+        let expectedUrl = new URL(expected, "http://localhost");
+        expect(t.router.state).toMatchObject({
+          historyAction: source === "action (replace)" ? "REPLACE" : "PUSH",
+          location: {
+            pathname: "/evil.com/path",
+            search: expectedUrl.search,
+            hash: expectedUrl.hash,
+            state: {
+              _isRedirect: true,
+            },
+          },
+          navigation: IDLE_NAVIGATION,
+          errors: null,
+        });
+      }
+    );
+
+    it("normalizes double slashes in same-origin absolute document redirects", async () => {
+      for (let replace of [false, true]) {
+        let t = setup({ routes: DOUBLE_SLASH_ROUTES });
+
+        let A = await t.navigate("/parent", {
+          formMethod: "post",
+          formData: createFormData({}),
+          replace,
+        });
+        await A.actions.parent.redirectReturn(
+          "http://localhost//evil.com/path?a=1#hash",
+          undefined,
+          { "X-Remix-Reload-Document": "true" }
+        );
+        let [called, notCalled] = replace
+          ? [t.window.location.replace, t.window.location.assign]
+          : [t.window.location.assign, t.window.location.replace];
+        expect(called).toHaveBeenCalledWith("/evil.com/path?a=1#hash");
+        expect(notCalled).not.toHaveBeenCalled();
+      }
+    });
+  });
+
   it("automatically replaces in the history stack if you redirect to the same location (root relative)", async () => {
     let t = setup({ routes: REDIRECT_ROUTES });
 
