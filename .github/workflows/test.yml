@@ -1,19 +1,12 @@
 name: 🧪 Test
 
 on:
-  push:
-    branches:
-      - main
-      - dev
-    tags-ignore:
-      - v*
-    paths-ignore:
-      - "docs/**"
-      - "**/README.md"
-  pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: "Optional jest arguments to select tests"
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -30,6 +23,7 @@ jobs:
           - 18
 
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: ⬇️ Checkout repo
@@ -61,7 +55,21 @@ jobs:
         run: pnpm lint
 
       - name: 🧪 Run tests
-        run: pnpm test
+        run: pnpm test ${{ inputs.test-filter }}
 
       - name: Check bundle size
         run: pnpm size
+
+      - name: 📦 Pack @remix-run/router
+        if: matrix.node == 18
+        run: |
+          cd packages/router && pnpm pack --pack-destination $GITHUB_WORKSPACE/seal-out
+          mv $GITHUB_WORKSPACE/seal-out/remix-run-router-1.23.0.tgz $GITHUB_WORKSPACE/seal-out/router-1.23.0.tgz
+
+      - name: ⬆️ Upload tarball
+        if: matrix.node == 18
+        uses: actions/upload-artifact@v4
+        with:
+          name: router-tgz
+          path: seal-out/*.tgz
+          if-no-files-found: error

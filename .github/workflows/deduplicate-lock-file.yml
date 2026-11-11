@@ -1,11 +1,7 @@
 name: ⚙️ Deduplicate lock file
 
 on:
-  push:
-    branches:
-      - dev
-    paths:
-      - ./pnpm-lock.yaml
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

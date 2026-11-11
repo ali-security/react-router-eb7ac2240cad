@@ -1,13 +1,6 @@
 name: 🦋 Changesets Release
 on:
-  push:
-    branches:
-      - release
-      - "release-*"
-      - "!release-experimental"
-      - "!release-experimental-*"
-      - "!release-manual"
-      - "!release-manual-*"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
